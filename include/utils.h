@@ -26,16 +26,16 @@ namespace lidar2cam{
     
         std::vector<std::string> get_file_lists(const std::string& input_dir, const std::string& prefix, const std::string& fileExtension);
         cv::Mat genObjs(const cv::Size& boardSize, float squareSize);
-        bool detectCharucoCornersAndPose(
-            const cv::Size& boardSize,
-            float squareSize, float markerSize,
-            const cv::Mat& undistImg, const cv::Mat& K, const cv::Mat& objs,
-            cv::Mat& draw_img, cv::Mat& charucoCorners, cv::Mat& charucoIds, cv::Mat& rvec, cv::Mat& tvec, double& rerror
-        );
+
+        bool detectCharucoCorners(const cv::Size& boardSize, float squareSize, float markerSize, const cv::Mat& img, cv::Mat& draw_img, cv::Mat& charucoCorners, cv::Mat& charucoIds);
+        bool estimateUndistPose(const cv::Size& boardSize, float squareSize, float markerSize, const cv::Mat& objs, const cv::Mat& K, const cv::Mat& charucoCorners, const cv::Mat& charucoIds, cv::Mat& rvec, cv::Mat& tvec, cv::Mat& draw_img, double& rerror);
 
         double reproject_error(const cv::Mat& corners, const cv::Mat& objs, const cv::Mat& K, const cv::Mat& rvec, const cv::Mat& tvec);
 
-        std::vector<cv::Point2d> load_named_img_points(const std::string& named_img_file);
-        std::vector<cv::Point3d> load_named_pcd_points(const std::string& named_pcd_file);
+        std::vector<cv::Point2f> load_named_img_points(const std::string& named_img_file);
+        std::vector<cv::Point3f> load_named_pcd_points(const std::string& named_pcd_file);
+
+        void undistPointsGeneral(const cv::Mat& distortedPoints, const cv::Mat& K, const cv::Mat& D, CameraType type, cv::Mat& undistortedPoints);
+        void undistImageGeneral(const cv::Mat& distortedImg, const cv::Mat& K, const cv::Mat& D, CameraType type, cv::Mat& undistortedImg);
     }
 }

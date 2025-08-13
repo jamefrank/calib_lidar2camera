@@ -2,7 +2,9 @@
 #include <Eigen/src/Core/Matrix.h>
 #include <cassert>
 #include <opencv2/aruco/charuco.hpp>
+#include <opencv2/calib3d.hpp>
 #include <opencv2/calib3d/calib3d.hpp>
+#include <opencv2/core/mat.hpp>
 #include <opencv2/core/types.hpp>
 #include <opencv2/imgproc.hpp>
 #include <spdlog/spdlog.h>
@@ -128,55 +130,63 @@ cv::Mat lidar2cam::utils::genObjs(const cv::Size &boardSize, float squareSize) {
   return objs;
 }
 
-bool lidar2cam::utils::detectCharucoCornersAndPose(
-    const cv::Size &boardSize, float squareSize, float markerSize,
-    const cv::Mat &undistImg, const cv::Mat &K, const cv::Mat &objs,
-    cv::Mat &imageCopy, cv::Mat &charucoCorners, cv::Mat &charucoIds,
-    cv::Mat &rvec, cv::Mat &tvec, double &rerror) {
-  int squaresX = boardSize.width + 1;
-  int squaresY = boardSize.height + 1;
-  float squareLength = squareSize / 1000.0f;
-  float markerLength = markerSize / 1000.0f;
-  cv::Ptr<cv::aruco::Dictionary> dictionary_ =
-      cv::aruco::getPredefinedDictionary(cv::aruco::DICT_4X4_250);
-  cv::Ptr<cv::aruco::CharucoBoard> board_ = cv::aruco::CharucoBoard::create(
-      squaresX, squaresY, squareLength, markerLength, dictionary_);
 
-  cv::Mat gray;
-  undistImg.copyTo(imageCopy);
-  cv::cvtColor(undistImg, gray, cv::COLOR_BGR2GRAY);
-  cv::equalizeHist(gray, gray);
-  // cv::Mat blur_usm;
-  // cv::GaussianBlur(gray, blur_usm, cv::Size(0, 0), 25);
-  // cv::addWeighted(gray, 1.5, blur_usm, -0.5, 0, gray);
 
-  cv::Ptr<cv::aruco::DetectorParameters> parameters =
-      cv::aruco::DetectorParameters::create();
-  std::vector<int> marker_ids;
-  std::vector<std::vector<cv::Point2f>> marker_corners, marker_rejected;
+bool lidar2cam::utils::detectCharucoCorners(const cv::Size& boardSize, float squareSize, float markerSize, const cv::Mat& img, cv::Mat& draw_img, cv::Mat& charucoCorners, cv::Mat& charucoIds) {
+    int squaresX = boardSize.width + 1;
+    int squaresY = boardSize.height + 1;
+    float squareLength = squareSize / 1000.0f;
+    float markerLength = markerSize / 1000.0f;
+    cv::Ptr<cv::aruco::Dictionary> dictionary_ = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_4X4_250);
+    cv::Ptr<cv::aruco::CharucoBoard> board_ = cv::aruco::CharucoBoard::create(squaresX, squaresY, squareLength, markerLength, dictionary_);
 
-  cv::aruco::detectMarkers(gray, dictionary_, marker_corners, marker_ids,
-                           parameters, marker_rejected);
+    cv::Mat gray;
+    img.copyTo(draw_img);
+    cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY);
+    cv::equalizeHist(gray, gray);
+    // cv::Mat blur_usm;
+    // cv::GaussianBlur(gray, blur_usm, cv::Size(0, 0), 25);
+    // cv::addWeighted(gray, 1.5, blur_usm, -0.5, 0, gray);
 
-  cv::aruco::interpolateCornersCharuco(marker_corners, marker_ids, gray, board_,
-                                       charucoCorners, charucoIds);
-  if (charucoIds.rows == boardSize.width * boardSize.height) {
+    cv::Ptr<cv::aruco::DetectorParameters> parameters =
+        cv::aruco::DetectorParameters::create();
+    std::vector<int> marker_ids;
+    std::vector<std::vector<cv::Point2f>> marker_corners, marker_rejected;
 
-    bool valid = cv::aruco::estimatePoseCharucoBoard(
-        charucoCorners, charucoIds, board_, K, cv::Mat(), rvec, tvec);
-    if (valid) {
-      // calc error
-      rerror = reproject_error(charucoCorners, objs, K, rvec, tvec);
-      //
-      cv::aruco::drawDetectedMarkers(imageCopy, marker_corners, marker_ids);
-      cv::aruco::drawDetectedCornersCharuco(imageCopy, charucoCorners,
-                                            charucoIds, cv::Scalar(255, 0, 0));
-      cv::drawFrameAxes(imageCopy, K, cv::Mat(), rvec, tvec, 0.1f);
-      return true;
+    cv::aruco::detectMarkers(gray, dictionary_, marker_corners, marker_ids, parameters, marker_rejected);
+
+    if(marker_ids.size()==0)
+        return false;
+
+    cv::aruco::drawDetectedMarkers(draw_img, marker_corners, marker_ids);
+
+    cv::aruco::interpolateCornersCharuco(marker_corners, marker_ids, gray, board_, charucoCorners, charucoIds);
+
+    cv::aruco::drawDetectedCornersCharuco(draw_img, charucoCorners, charucoIds, cv::Scalar(255, 0, 0));
+
+    return charucoIds.rows == boardSize.width * boardSize.height;
+}
+
+bool lidar2cam::utils::estimateUndistPose(const cv::Size& boardSize, float squareSize, float markerSize, const cv::Mat& objs, const cv::Mat& K, const cv::Mat& charucoCorners, const cv::Mat& charucoIds, cv::Mat& rvec, cv::Mat& tvec, cv::Mat& draw_img, double& rerror) {
+    int squaresX = boardSize.width + 1;
+    int squaresY = boardSize.height + 1;
+    float squareLength = squareSize / 1000.0f;
+    float markerLength = markerSize / 1000.0f;
+    cv::Ptr<cv::aruco::Dictionary> dictionary_ = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_4X4_250);
+    cv::Ptr<cv::aruco::CharucoBoard> board_ = cv::aruco::CharucoBoard::create(squaresX, squaresY, squareLength, markerLength, dictionary_);
+    
+    if (charucoIds.rows == boardSize.width * boardSize.height) {
+        bool valid = cv::aruco::estimatePoseCharucoBoard(charucoCorners, charucoIds, board_, K, cv::Mat(), rvec, tvec);
+        if (valid) {
+            // calc error
+            rerror = reproject_error(charucoCorners, objs, K, rvec, tvec);
+            //
+            cv::drawFrameAxes(draw_img, K, cv::Mat(), rvec, tvec, 0.1f);
+            return true;
+        }
     }
-  }
 
-  return false;
+    return false;
 }
 
 double lidar2cam::utils::reproject_error(const cv::Mat &corners,
@@ -188,6 +198,7 @@ double lidar2cam::utils::reproject_error(const cv::Mat &corners,
   double rerror = 0;
   for (int i = 0; i < imgpoints.rows; i++) {
     cv::Vec2f e = imgpoints.at<cv::Vec2f>(i) - corners.at<cv::Vec2f>(i);
+    // spdlog::info("{},{}:{},{}", imgpoints.at<cv::Vec2f>(i)(0), imgpoints.at<cv::Vec2f>(i)(1), corners.at<cv::Vec2f>(i)(0), corners.at<cv::Vec2f>(i)(1));
     rerror += std::sqrt(e[0] * e[0] + e[1] * e[1]);
   }
   rerror /= imgpoints.rows;
@@ -195,36 +206,71 @@ double lidar2cam::utils::reproject_error(const cv::Mat &corners,
   return rerror;
 }
 
-std::vector<cv::Point2d>
+std::vector<cv::Point2f>
 lidar2cam::utils::load_named_img_points(const std::string &named_img_file) {
-  std::vector<cv::Point2d> points;
+  std::vector<cv::Point2f> points;
 
   std::ifstream file(named_img_file);
   assert(file.is_open());
 
   double x, y;
+  int cnt = 0;
   while (file >> x >> y) {
     points.emplace_back(x, y);
+    spdlog::info("img_point_{}: {:8.2f} {:8.2f}", cnt, x, y);
+    cnt++;
   }
 
   file.close();
+  spdlog::info("img point size: {}", points.size());
 
   return points;
 }
 
-std::vector<cv::Point3d>
+std::vector<cv::Point3f>
 lidar2cam::utils::load_named_pcd_points(const std::string &named_pcd_file) {
-  std::vector<cv::Point3d> points;
+  std::vector<cv::Point3f> points;
 
   std::ifstream file(named_pcd_file);
   assert(file.is_open());
 
   double x, y, z;
+  int cnt =0 ;
   while (file >> x >> y >> z) {
     points.emplace_back(x, y, z);
+    spdlog::info("pcd_point_{}: {:8.2f} {:8.2f} {:8.2f}", cnt, x, y, z);
+    cnt++;
   }
 
   file.close();
 
+  spdlog::info("pcd point size: {}", points.size());
+
   return points;
+}
+
+void lidar2cam::utils::undistPointsGeneral(const cv::Mat& distortedPoints, const cv::Mat& K, const cv::Mat& D, CameraType type, cv::Mat& undistortedPoints) {
+    if(CameraType::PINHOLE == type){
+        cv::undistortPoints(distortedPoints, undistortedPoints, K, D, cv::Mat(), K);
+    }
+    else if(CameraType::FISHEYE == type){
+        cv::fisheye::undistortPoints(distortedPoints, undistortedPoints, K, D);
+    }
+    else {
+        spdlog::error("not support camera model type");
+        exit(-1);
+    }
+}
+
+void lidar2cam::utils::undistImageGeneral(const cv::Mat& distortedImg, const cv::Mat& K, const cv::Mat& D, CameraType type, cv::Mat& undistortedImg) {
+    if(CameraType::PINHOLE == type){
+        cv::undistort(distortedImg, undistortedImg, K, D);
+    }
+    else if(CameraType::FISHEYE == type){
+        cv::fisheye::undistortImage(distortedImg, undistortedImg, K, D);
+    }
+    else{
+        spdlog::error("not support camera model type");
+        exit(-1);
+    }
 }
