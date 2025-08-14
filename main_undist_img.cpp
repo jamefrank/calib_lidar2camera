@@ -22,7 +22,7 @@
 using namespace std;
 
 int main(int argc, char *argv[]) {
-  spdlog::info("Welcome to use undist tool!");
+  spdlog::info("Welcome to use undist img tool!");
 
   cmdline::parser parser;
   parser.add<string>("input", 'i', "Input directory (example 'data')", true,
@@ -97,19 +97,19 @@ int main(int argc, char *argv[]) {
   std::string outputDir = parser.get<std::string>("output");
 
 
-
   for (int i = 0; i < imageFilenames.size(); i++) {
     cv::Mat image = cv::imread(imageFilenames[i], -1); 
     cv::Mat img;
     if("undist" == action_modal){
        lidar2cam::utils::undistImageGeneral(image, K, D, camera_type, img);
+      // img = lidar2cam::utils::undist_image(image, K, D, camera_type);
        if(detect){
         cv::Mat drawImg, charucoCorners, charucoIds;
         bool bsuc = lidar2cam::utils::detectCharucoCorners(boardSize, squareSize, markerSize, image, drawImg, charucoCorners, charucoIds);
         if(bsuc){
           cv::Mat undistortedPoints;
           lidar2cam::utils::undistPointsGeneral(charucoCorners, K, D, camera_type, undistortedPoints);
-          cv::aruco::drawDetectedCornersCharuco(img, charucoCorners, charucoIds, cv::Scalar(255, 0, 0));
+          cv::aruco::drawDetectedCornersCharuco(img, undistortedPoints, charucoIds, cv::Scalar(255, 0, 0));
         }
        }
     }

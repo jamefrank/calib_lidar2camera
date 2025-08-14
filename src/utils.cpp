@@ -1,6 +1,7 @@
 #include "utils.h"
 #include <Eigen/src/Core/Matrix.h>
 #include <cassert>
+#include <cmath>
 #include <opencv2/aruco/charuco.hpp>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/calib3d/calib3d.hpp>
@@ -254,7 +255,7 @@ void lidar2cam::utils::undistPointsGeneral(const cv::Mat& distortedPoints, const
         cv::undistortPoints(distortedPoints, undistortedPoints, K, D, cv::Mat(), K);
     }
     else if(CameraType::FISHEYE == type){
-        cv::fisheye::undistortPoints(distortedPoints, undistortedPoints, K, D);
+        cv::fisheye::undistortPoints(distortedPoints, undistortedPoints, K, D, cv::Matx33d::eye(), K);
     }
     else {
         spdlog::error("not support camera model type");
@@ -267,10 +268,120 @@ void lidar2cam::utils::undistImageGeneral(const cv::Mat& distortedImg, const cv:
         cv::undistort(distortedImg, undistortedImg, K, D);
     }
     else if(CameraType::FISHEYE == type){
-        cv::fisheye::undistortImage(distortedImg, undistortedImg, K, D);
+        cv::fisheye::undistortImage(distortedImg, undistortedImg, K, D, K, distortedImg.size());
     }
     else{
         spdlog::error("not support camera model type");
         exit(-1);
     }
+}
+
+
+void lidar2cam::utils::distPointsGeneral(
+    const cv::Mat& undistortedPoints,  // 输入：无畸变点，Nx2 格式
+    const cv::Mat& K,
+    const cv::Mat& D,
+    CameraType type,
+    cv::Mat& distortedPoints           // 输出：畸变后的图像点
+) {
+    distortedPoints.create(undistortedPoints.size(), undistortedPoints.type());
+
+    double fx = K.at<float>(0, 0);
+    double fy = K.at<float>(1, 1);
+    double cx = K.at<float>(0, 2);
+    double cy = K.at<float>(1, 2);
+
+    int n = undistortedPoints.rows;
+    const auto* src = undistortedPoints.ptr<cv::Point2f>(0);
+    auto* dst = distortedPoints.ptr<cv::Point2f>(0);
+
+    if (type == CameraType::PINHOLE) {
+        double k1 = D.at<float>(0, 0);
+        double k2 = D.at<float>(0, 1);
+        double p1 = D.cols > 2 ? D.at<float>(0, 2) : 0.0;
+        double p2 = D.cols > 3 ? D.at<float>(0, 3) : 0.0;
+        double k3 = D.cols > 4 ? D.at<float>(0, 4) : 0.0;
+
+        for (int i = 0; i < n; ++i) {
+            double x = src[i].x;
+            double y = src[i].y;
+            double u = (x-cx)/fx;
+            double v = (y-cy)/fy;
+            
+            double rho_sqr = u * u + v * v;
+            double L = 1.0 + k1 * rho_sqr + k2 * rho_sqr * rho_sqr + k3 * rho_sqr * rho_sqr * rho_sqr;
+            double du = 2.0 * p1 * u * v + p2 * (rho_sqr + 2.0 * u * u);
+            double dv = p1 * (rho_sqr + 2.0 * v * v) + 2.0 * p2 * u * v;
+            double alpha = 0;
+
+            double xd = L * u + du;
+            double yd = L * v + dv;
+      
+            dst[i].x = static_cast<float>(fx * (xd + alpha*yd) + cx);
+            dst[i].y = static_cast<float>(fy * yd + cy);
+        }
+    }
+    else if (type == CameraType::FISHEYE) {
+        double k1 = D.at<float>(0, 0);
+        double k2 = D.at<float>(0, 1);
+        double k3 = D.at<float>(0, 2);
+        double k4 = D.at<float>(0, 3);
+
+        for (int i = 0; i < n; ++i) {
+            double x = src[i].x;
+            double y = src[i].y;
+            double c_x = (x-cx)/fx;
+            double c_y = (y-cy)/fy;
+            double r = std::sqrt(c_x * c_x + c_y * c_y);
+            // double phi = std::atan2(c_y, c_x);
+            double theta = std::atan2(r, 1);
+            double theta2 = theta * theta;
+            double theta4 = theta2 * theta2;
+            double theta6 = theta4 * theta2;
+            double theta8 = theta4 * theta4;
+            double theta_d = theta * (1 + k1 * theta2 + k2 * theta4 + k3 * theta6 + k4 * theta8);
+            double scale = theta_d / r;
+
+            double xd = c_x * scale;  // = theta_d*cos(phi)
+            double yd = c_y * scale;  // = theta_d*sin(phi)
+
+            dst[i].x = static_cast<float>(fx * xd + cx);
+            dst[i].y = static_cast<float>(fy * yd + cy);
+        }
+    }
+    else {
+        spdlog::error("Not support camera model type");
+        exit(-1);
+    }
+}
+
+void lidar2cam::utils::distImageGeneral(const cv::Mat& undistortedImg, const cv::Mat& K, const cv::Mat& D, CameraType type, cv::Mat& distortedImg) {
+    // TODO
+    spdlog::error("distImageGeneral TODO");
+    exit(-1);
+}
+
+void lidar2cam::utils::drawPoints(cv::Mat &img, const cv::Mat& points) {
+    for (int i = 0; i < points.rows; i++)
+      cv::circle(img, cv::Point2f(points.at<cv::Vec2f>(i)[0],points.at<cv::Vec2f>(i)[1]), 5, cv::Scalar(0, 255, 255));
+}
+
+void lidar2cam::utils::savePoints(const cv::Mat& points, const std::string& fileName) {
+    std::ofstream file(fileName);
+    
+    if (!file.is_open()) {
+        std::cerr << "Error: Could not open file for writing: " << fileName << std::endl;
+        assert(false);
+        return;
+    }
+
+    // 按行写入：每行一个点 (x y)
+    for (int i = 0; i < points.rows; ++i) {
+        float x = points.at<cv::Point2f>(i).x;
+        float y = points.at<cv::Point2f>(i).y;
+        file << x << " " << y << "\n";
+    }
+
+    file.close();
+    std::cout << "Points saved to: " << fileName << std::endl;
 }

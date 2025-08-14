@@ -5,5 +5,5 @@
 
 ## example
 ```
-
+./calibLidar2Cam -i ../data -p "l_" -t fisheye -o ../output -r 2
 ```

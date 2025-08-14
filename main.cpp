@@ -45,6 +45,8 @@ int main(int argc, char *argv[]) {
                      cmdline::oneof<string>("pinhole", "fisheye"));
   parser.add<string>("output", 'o', "Output directory containing calib results",
                      true, "");
+  parser.add<double>("named-weight", 'r', "weight over to img", false,
+                     1.0);
   parser.add("verbose", '\0', "verbose when calib");
 
   parser.parse_check(argc, argv);
@@ -91,6 +93,7 @@ int main(int argc, char *argv[]) {
   std::string outputDir = parser.get<std::string>("output");
 
   std::vector<cv::Mat> all_corners;
+  std::vector<cv::Mat> all_corners_undist;
   std::vector<cv::Mat> all_rvecs;
   std::vector<cv::Mat> all_tvecs;
   std::vector<cv::Mat> all_corner_ids;
@@ -118,6 +121,7 @@ int main(int argc, char *argv[]) {
       all_rvecs.emplace_back(rvec);
       all_tvecs.emplace_back(tvec);
       all_corner_ids.emplace_back(charucoIds_dist);
+      all_corners_undist.emplace_back(charucoCorners_undist);
 
       if (verbose) {
         std::string out_file = outputDir + "/" + filepath.filename().string();
@@ -138,122 +142,138 @@ int main(int argc, char *argv[]) {
   assert(named_img_points.size() == named_pcd_points.size());
   assert(named_img_points.size() >= 4);
 
-//   // init lidar2cam RT
-//   cv::Mat l2c_rvec, l2c_tvec;
-//   if (!cv::solvePnP(named_pcd_points, named_img_points, K, cv::Mat(), l2c_rvec,
-//                     l2c_tvec)) {
-//     spdlog::error("slove pnp for init RT error");
-//     exit(-1);
-//   }
-//   double init_error = lidar2cam::utils::reproject_error(cv::Mat(named_img_points), cv::Mat(named_pcd_points), K, l2c_rvec, l2c_tvec);
-//   spdlog::info("init error: {}", init_error);
-//   for(int i=0; i<all_corners.size(); i++){
-//     double tmp_error = lidar2cam::utils::reproject_error(all_corners[i], objs, K, all_rvecs[i], all_tvecs[i]);
-//     spdlog::info("init error {}: {}", i, tmp_error);
-//   }
-//   cv::Mat init_R;
-//   cv::Rodrigues(l2c_rvec, init_R);
-//   lidar2cam::utils::log_cvmat(init_R, "init_R");
-//   lidar2cam::utils::log_cvmat(l2c_tvec, "init_t");
-//   lidar2cam::utils::log_cvmat(K, "init_K");
+  // init lidar2cam RT
+  cv::Mat undist_named_points;
+  lidar2cam::utils::undistPointsGeneral(cv::Mat(named_img_points), K, D, camera_type, undist_named_points);
+  cv::Mat l2c_rvec, l2c_tvec;
+  if (!cv::solvePnP(named_pcd_points, undist_named_points, K, cv::Mat(), l2c_rvec,
+                    l2c_tvec)) {
+    spdlog::error("slove pnp for init RT error");
+    exit(-1);
+  }
+  double init_error = lidar2cam::utils::reproject_error(undist_named_points, cv::Mat(named_pcd_points), K, l2c_rvec, l2c_tvec);
+  spdlog::info("init error: {}", init_error);
 
-//   // opt fx,fy and lidar2cam RT
-//   spdlog::info("start opt by ceres ...");
-//   double *parameters_ = new double[6 * (all_corners.size())];
-//   for (int i = 0; i < all_corners.size(); i++) {
-//     parameters_[i * 6 + 0] = all_rvecs[i].at<double>(0);
-//     parameters_[i * 6 + 1] = all_rvecs[i].at<double>(1);
-//     parameters_[i * 6 + 2] = all_rvecs[i].at<double>(2);
-//     parameters_[i * 6 + 3] = all_tvecs[i].at<double>(0);
-//     parameters_[i * 6 + 4] = all_tvecs[i].at<double>(1);
-//     parameters_[i * 6 + 5] = all_tvecs[i].at<double>(2);
-//     lidar2cam::utils::log_cvmat(all_rvecs[i], "rvec");
-//     std::cout << parameters_[i * 6 + 0] << ":" << parameters_[i * 6 + 1] << ":" << parameters_[i * 6 + 2] << std::endl;
-//     lidar2cam::utils::log_cvmat(all_tvecs[i], "tvec");
-//     std::cout << parameters_[i * 6 + 3] << ":" << parameters_[i * 6 + 4] << ":" << parameters_[i * 6 + 5] << std::endl;
-
-//   }
-// //   parameters_[all_corners.size() * 6 + 0] = l2c_rvec.at<float>(0);
-// //   parameters_[all_corners.size() * 6 + 1] = l2c_rvec.at<float>(1);
-// //   parameters_[all_corners.size() * 6 + 2] = l2c_rvec.at<float>(2);
-// //   parameters_[all_corners.size() * 6 + 3] = l2c_tvec.at<float>(0);
-// //   parameters_[all_corners.size() * 6 + 4] = l2c_tvec.at<float>(1);
-// //   parameters_[all_corners.size() * 6 + 5] = l2c_tvec.at<float>(2);
-//   double parameters_l2c[6];
-//     parameters_l2c[0] = l2c_rvec.at<float>(0);
-//     parameters_l2c[1] = l2c_rvec.at<float>(1);
-//     parameters_l2c[2] = l2c_rvec.at<float>(2);
-//     parameters_l2c[3] = l2c_tvec.at<float>(0);
-//     parameters_l2c[4] = l2c_tvec.at<float>(1);
-//     parameters_l2c[5] = l2c_tvec.at<float>(2);
-
-//   Eigen::Matrix3d K_Eigen;
-//   cv::cv2eigen(K, K_Eigen);
-//   double parameters_fxy_[2];
-//   parameters_fxy_[0] = K_Eigen(0,0);
-//   parameters_fxy_[1] = K_Eigen(1,1);
-//   spdlog::info("fxy: {}, {}", parameters_fxy_[0], parameters_fxy_[1]);
-
-//   ceres::Problem problem;
-
-// //    lidar2cam::utils::log_cvmat(objs, "objs");
-// //   add target board corner items
-//   for (int i = 0; i < all_corners.size(); i++) {
-//     for (int k = 0; k < objs.rows; k++) {
-//         Eigen::Vector3d obj(objs.at<cv::Vec3f>(k)[0], objs.at<cv::Vec3f>(k)[1], objs.at<cv::Vec3f>(k)[2]);
-//         Eigen::Vector2d corner(all_corners[i].at<cv::Vec2f>(k)[0], all_corners[i].at<cv::Vec2f>(k)[1]);
-//         ceres::CostFunction *cost_funciton = Target2ImgReprojectionError::Create(obj, corner, K_Eigen);
-//         ceres::LossFunction *lossFunction = new ceres::CauchyLoss(1.0);
-//         problem.AddResidualBlock(cost_funciton, lossFunction, parameters_ + i * 6, parameters_fxy_);
-//     }
-//     problem.SetParameterBlockConstant(parameters_ + i * 6);
-//   }
-
-// //   //add named points items
-// //   for(int i=0; i<named_img_points.size(); i++){
-// //     Eigen::Vector3d obj(named_pcd_points[i].x, named_pcd_points[i].y, named_pcd_points[i].z);
-// //     Eigen::Vector2d corner(named_img_points[i].x, named_img_points[i].y);
-// //     ceres::CostFunction *cost_funciton = Target2ImgReprojectionError::Create(obj, corner, K_Eigen);
-// //     ceres::LossFunction *lossFunction = new ceres::CauchyLoss(1.0);
-// //     problem.AddResidualBlock(cost_funciton, lossFunction, parameters_l2c, parameters_fxy_);
-// //   }
-
-//   ceres::Solver::Options options;
-//   options.linear_solver_type = ceres::DENSE_SCHUR;
-//   options.minimizer_progress_to_stdout = false;
-//   options.max_num_iterations = 200;
-//   options.num_threads = 8;
-
-//   ceres::Solver::Summary summary;
-//   ceres::Solve(options, &problem, &summary);
-//   std::cout << summary.FullReport() << "\n";
-// //   std::cout << summary.BriefReport() << " \n";
-
-//   l2c_rvec.at<float>(0) = parameters_l2c[0];
-//   l2c_rvec.at<float>(1) = parameters_l2c[1];
-//   l2c_rvec.at<float>(2) = parameters_l2c[2];
-//   l2c_tvec.at<float>(0) = parameters_l2c[3];
-//   l2c_tvec.at<float>(1) = parameters_l2c[4];
-//   l2c_tvec.at<float>(2) = parameters_l2c[5];
-//   K.at<float>(0,0) = parameters_fxy_[0];
-//   K.at<float>(1,1) = parameters_fxy_[1];
-
-//   double final_error = lidar2cam::utils::reproject_error(cv::Mat(named_img_points), cv::Mat(named_pcd_points), K, l2c_rvec, l2c_tvec);
-//   spdlog::info("final error: {}", final_error);
-//   for(int i=0; i<all_corners.size(); i++){
-//     double tmp_error = lidar2cam::utils::reproject_error(all_corners[i], objs, K, all_rvecs[i], all_tvecs[i]);
-//     spdlog::info("final error {}: {}", i, tmp_error);
-//   }
-
-//   cv::Mat final_R;
-//   cv::Rodrigues(l2c_rvec, final_R);
-//   lidar2cam::utils::log_cvmat(final_R, "lidar2cam_R");
-//   lidar2cam::utils::log_cvmat(l2c_tvec, "lidar2cam_t");
-//   lidar2cam::utils::log_cvmat(K, "final_K");
-//   spdlog::info("fxy: {}, {}", parameters_fxy_[0], parameters_fxy_[1]);
+  cv::Mat init_R;
+  cv::Rodrigues(l2c_rvec, init_R);
+  lidar2cam::utils::log_cvmat(init_R, "init_R");
+  lidar2cam::utils::log_cvmat(l2c_tvec, "init_t");
 
 
-//   delete [] parameters_;
+  // opt fx,fy and lidar2cam RT
+  spdlog::info("start opt by ceres ...");
+  double *parameters_ = new double[6 * (all_corners.size())];
+  for (int i = 0; i < all_corners.size(); i++) {
+    parameters_[i * 6 + 0] = all_rvecs[i].at<double>(0);
+    parameters_[i * 6 + 1] = all_rvecs[i].at<double>(1);
+    parameters_[i * 6 + 2] = all_rvecs[i].at<double>(2);
+    parameters_[i * 6 + 3] = all_tvecs[i].at<double>(0);
+    parameters_[i * 6 + 4] = all_tvecs[i].at<double>(1);
+    parameters_[i * 6 + 5] = all_tvecs[i].at<double>(2);
+  }
+  double parameters_l2c[6];
+  parameters_l2c[0] = l2c_rvec.at<double>(0);
+  parameters_l2c[1] = l2c_rvec.at<double>(1);
+  parameters_l2c[2] = l2c_rvec.at<double>(2);
+  parameters_l2c[3] = l2c_tvec.at<double>(0);
+  parameters_l2c[4] = l2c_tvec.at<double>(1);
+  parameters_l2c[5] = l2c_tvec.at<double>(2);
+
+  Eigen::Matrix3d K_Eigen;
+  cv::cv2eigen(K, K_Eigen);
+  double parameters_fxy_[2];
+  parameters_fxy_[0] = K_Eigen(0,0);
+  parameters_fxy_[1] = K_Eigen(1,1);
+  double cx = K_Eigen(0,2);
+  double cy = K_Eigen(1,2);
+  double k1,k2,k3,k4,k5,p1,p2;
+  if(lidar2cam::CameraType::PINHOLE ==  camera_type){
+    k1 = D.at<float>(0, 0);
+    k2 = D.at<float>(0, 1);
+    p1 = D.cols > 2 ? D.at<float>(0, 2) : 0.0;
+    p2 = D.cols > 3 ? D.at<float>(0, 3) : 0.0;
+    k3 = D.cols > 4 ? D.at<float>(0, 4) : 0.0;
+  }
+  else if(lidar2cam::CameraType::FISHEYE ==  camera_type){
+    k2 = D.at<float>(0);
+    k3 = D.at<float>(1);
+    k4 = D.at<float>(2);
+    k5 = D.at<float>(3);
+  }
+
+  ceres::Problem problem;
+  double weight = parser.get<double>("named-weight");
+  spdlog::info("named-weight: {}", weight);
+  for (int i = 0; i < all_corners.size(); i++) {
+    for (int k = 0; k < objs.rows; k++) {
+        Eigen::Vector3d obj(objs.at<cv::Vec3f>(k)[0], objs.at<cv::Vec3f>(k)[1], objs.at<cv::Vec3f>(k)[2]);
+        Eigen::Vector2d corner(all_corners[i].at<cv::Vec2f>(k)[0], all_corners[i].at<cv::Vec2f>(k)[1]);
+        ceres::CostFunction *cost_funciton;
+        if(camera_type == lidar2cam::CameraType::PINHOLE)
+          cost_funciton = PinholeReprojectionError::Create(obj, corner, cx, cy, k1, k2, k3, p1, p2, weight);
+        else if(camera_type == lidar2cam::CameraType::FISHEYE)
+          cost_funciton = FishEyeReprojectionError::Create(obj, corner, cx, cy, k2, k3, k4, k5, weight); 
+        ceres::LossFunction *lossFunction = new ceres::CauchyLoss(1.0);
+        problem.AddResidualBlock(cost_funciton, lossFunction, parameters_ + i * 6, parameters_fxy_);
+    }
+    // problem.SetParameterBlockConstant(parameters_ + i * 6);
+  }
+
+  for(int i=0; i<named_img_points.size(); i++){
+    Eigen::Vector3d obj(named_pcd_points[i].x, named_pcd_points[i].y, named_pcd_points[i].z);
+    Eigen::Vector2d corner(named_img_points[i].x, named_img_points[i].y);
+    ceres::CostFunction *cost_funciton;
+    if(camera_type == lidar2cam::CameraType::PINHOLE)
+      cost_funciton = PinholeReprojectionError::Create(obj, corner, cx, cy, k1, k2, k3, p1, p2, weight);
+    else if(camera_type == lidar2cam::CameraType::FISHEYE)
+      cost_funciton = FishEyeReprojectionError::Create(obj, corner, cx, cy, k2, k3, k4, k5, weight); 
+    ceres::LossFunction *lossFunction = new ceres::CauchyLoss(1.0);
+    problem.AddResidualBlock(cost_funciton, lossFunction, parameters_l2c, parameters_fxy_);
+  }
+
+  ceres::Solver::Options options;
+  options.linear_solver_type = ceres::DENSE_SCHUR;
+  options.minimizer_progress_to_stdout = false;
+  options.max_num_iterations = 200;
+  options.num_threads = 8;
+
+  ceres::Solver::Summary summary;
+  ceres::Solve(options, &problem, &summary);
+  // std::cout << summary.FullReport() << "\n";
+  std::cout << summary.BriefReport() << " \n";
+
+  l2c_rvec.at<double>(0) = parameters_l2c[0];
+  l2c_rvec.at<double>(1) = parameters_l2c[1];
+  l2c_rvec.at<double>(2) = parameters_l2c[2];
+  l2c_tvec.at<double>(0) = parameters_l2c[3];
+  l2c_tvec.at<double>(1) = parameters_l2c[4];
+  l2c_tvec.at<double>(2) = parameters_l2c[5];
+  K.at<float>(0,0) = parameters_fxy_[0];
+  K.at<float>(1,1) = parameters_fxy_[1];
+
+  lidar2cam::utils::undistPointsGeneral(cv::Mat(named_img_points), K, D, camera_type, undist_named_points);
+  double final_error = lidar2cam::utils::reproject_error(cv::Mat(undist_named_points), cv::Mat(named_pcd_points), K, l2c_rvec, l2c_tvec);
+  spdlog::info("final error: {}", final_error);
+  for(int i=0; i<all_corners.size(); i++){
+    all_rvecs[i].at<double>(0) = parameters_[i * 6 + 0];
+    all_rvecs[i].at<double>(1) = parameters_[i * 6 + 1];
+    all_rvecs[i].at<double>(2) = parameters_[i * 6 + 2];
+    all_tvecs[i].at<double>(0) = parameters_[i * 6 + 3];
+    all_tvecs[i].at<double>(1) = parameters_[i * 6 + 4];
+    all_tvecs[i].at<double>(2) = parameters_[i * 6 + 5];
+    double tmp_error = lidar2cam::utils::reproject_error(all_corners_undist[i], objs, K, all_rvecs[i], all_tvecs[i]);
+    spdlog::info("final error {}: {}", i, tmp_error);
+  }
+
+  cv::Mat final_R;
+  cv::Rodrigues(l2c_rvec, final_R);
+  lidar2cam::utils::log_cvmat(final_R, "lidar2cam_R");
+  lidar2cam::utils::log_cvmat(l2c_tvec, "lidar2cam_t");
+  lidar2cam::utils::log_cvmat(K, "final_K");
+  spdlog::info("fxy: {}, {}", parameters_fxy_[0], parameters_fxy_[1]);
+
+
+  delete [] parameters_;
 
   return 0;
 }

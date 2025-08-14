@@ -37,5 +37,11 @@ namespace lidar2cam{
 
         void undistPointsGeneral(const cv::Mat& distortedPoints, const cv::Mat& K, const cv::Mat& D, CameraType type, cv::Mat& undistortedPoints);
         void undistImageGeneral(const cv::Mat& distortedImg, const cv::Mat& K, const cv::Mat& D, CameraType type, cv::Mat& undistortedImg);
+        void distPointsGeneral(const cv::Mat& undistortedPoints, const cv::Mat& K, const cv::Mat& D, CameraType type, cv::Mat& distortedPoints);
+        void distImageGeneral(const cv::Mat& undistortedImg, const cv::Mat& K, const cv::Mat& D, CameraType type, cv::Mat& distortedImg);
+
+        void drawPoints(cv::Mat &img, const cv::Mat& points);
+        void savePoints(const cv::Mat& points, const std::string& fileName);
+
     }
 }

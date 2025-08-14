@@ -43,3 +43,32 @@ target_link_libraries(calibLidar2Cam
 )
 
 
+add_executable(undistImgTool 
+  main_undist_img.cpp
+  src/utils.cpp
+)
+target_link_libraries(undistImgTool
+  ${YAML_CPP_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${EIGEN3_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${CERES_LIBRARIES}
+  spdlog::spdlog_header_only
+  ${Boost_LIBRARIES}
+)
+
+
+add_executable(undistPointsTool 
+  main_undist_points.cpp
+  src/utils.cpp
+)
+target_link_libraries(undistPointsTool
+  ${YAML_CPP_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${EIGEN3_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${CERES_LIBRARIES}
+  spdlog::spdlog_header_only
+  ${Boost_LIBRARIES}
+)
+
